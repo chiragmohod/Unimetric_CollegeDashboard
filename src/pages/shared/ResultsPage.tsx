@@ -9,16 +9,25 @@ import { getStoredUser } from '@/lib/auth';
 import {
   listFaculty,
   listResultMarks,
+  listResultSemesterStatus,
   listResultSubjects,
   listStudents,
   publishResultSubject,
   saveResultMark,
+  scheduleResultSemesterPublish,
   type Faculty,
   type ResultMark,
+  type ResultSemesterStatus,
   type ResultSubject,
   type Student,
 } from '@/lib/api';
-import { buildResultSummary, calculateSgpi, getStudentsForClass, isSemesterPublished } from '@/lib/results';
+import {
+  buildResultSummary,
+  calculateCgpa,
+  calculateSgpi,
+  getStudentsForClassSemester,
+  isSemesterPublished,
+} from '@/lib/results';
 
 type DraftRow = {
   internalMarks: number;
@@ -31,35 +40,36 @@ export default function ResultsPage() {
   const [faculty, setFaculty] = useState<Faculty[]>([]);
   const [subjects, setSubjects] = useState<ResultSubject[]>([]);
   const [marks, setMarks] = useState<ResultMark[]>([]);
+  const [statuses, setStatuses] = useState<ResultSemesterStatus[]>([]);
   const [selectedSubjectId, setSelectedSubjectId] = useState('');
   const [selectedClass, setSelectedClass] = useState('');
-  const [selectedSemester, setSelectedSemester] = useState<number>(6);
+  const [selectedSemester, setSelectedSemester] = useState<number>(1);
+  const [scheduledPublishAt, setScheduledPublishAt] = useState('');
   const [draftRows, setDraftRows] = useState<Record<string, DraftRow>>({});
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState<ToastData | null>(null);
 
   useEffect(() => {
     async function load() {
-      const [studentData, facultyData, subjectData, markData] = await Promise.all([
+      const [studentData, facultyData, subjectData, markData, statusData] = await Promise.all([
         listStudents(),
         listFaculty(),
         listResultSubjects(),
         listResultMarks(),
+        listResultSemesterStatus(),
       ]);
 
       setStudents(studentData);
       setFaculty(facultyData);
       setSubjects(subjectData);
       setMarks(markData);
+      setStatuses(statusData);
     }
 
     void load();
   }, []);
 
-  const facultySubjects = useMemo(
-    () => subjects.filter((subject) => subject.facultyId === user?.id),
-    [subjects, user?.id]
-  );
+  const facultySubjects = useMemo(() => subjects.filter((subject) => subject.facultyId === user?.id), [subjects, user?.id]);
 
   useEffect(() => {
     if (user?.role === 'faculty' && facultySubjects[0] && !selectedSubjectId) {
@@ -70,14 +80,19 @@ export default function ResultsPage() {
   const selectedFacultySubject = facultySubjects.find((subject) => subject.id === selectedSubjectId) ?? facultySubjects[0];
 
   useEffect(() => {
+    if (user?.role === 'student') {
+      setSelectedSemester(user.subjects.length > 0 ? selectedSemester : students.find((student) => student.id === user.id)?.semester ?? 1);
+    }
+  }, [selectedSemester, students, user]);
+
+  useEffect(() => {
     if (!selectedFacultySubject) return;
-    const classStudents = getStudentsForClass(students, selectedFacultySubject.className);
+
+    const classStudents = getStudentsForClassSemester(students, selectedFacultySubject.className, selectedFacultySubject.semester);
     const nextDraft: Record<string, DraftRow> = {};
 
     for (const student of classStudents) {
-      const existingMark = marks.find(
-        (mark) => mark.studentId === student.id && mark.subjectId === selectedFacultySubject.id
-      );
+      const existingMark = marks.find((mark) => mark.studentId === student.id && mark.subjectId === selectedFacultySubject.id);
       nextDraft[student.id] = {
         internalMarks: existingMark?.internalMarks ?? 0,
         externalMarks: existingMark?.externalMarks ?? 0,
@@ -87,10 +102,7 @@ export default function ResultsPage() {
     setDraftRows(nextDraft);
   }, [marks, selectedFacultySubject, students]);
 
-  const allClasses = useMemo(
-    () => Array.from(new Set(subjects.map((subject) => subject.className))).sort(),
-    [subjects]
-  );
+  const allClasses = useMemo(() => Array.from(new Set(subjects.map((subject) => subject.className))).sort(), [subjects]);
 
   useEffect(() => {
     if ((user?.role === 'admin' || user?.role === 'student') && allClasses[0] && !selectedClass) {
@@ -102,46 +114,50 @@ export default function ResultsPage() {
 
   const availableSemesters = useMemo(
     () =>
-      Array.from(
+      (Array.from(
         new Set(subjects.filter((subject) => subject.className === classForView).map((subject) => subject.semester))
-      ).sort((first: number, second: number) => first - second),
+      ) as number[]).sort((first, second) => first - second),
     [classForView, subjects]
   );
 
   useEffect(() => {
-    if (availableSemesters[0] && !availableSemesters.includes(selectedSemester)) {
-      setSelectedSemester(availableSemesters[availableSemesters.length - 1]);
+    const preferredSemester =
+      user?.role === 'student' ? students.find((student) => student.id === user.id)?.semester ?? availableSemesters[0] : availableSemesters[0];
+
+    if (preferredSemester && !availableSemesters.includes(selectedSemester)) {
+      setSelectedSemester(preferredSemester);
     }
-  }, [availableSemesters, selectedSemester]);
+  }, [availableSemesters, selectedSemester, students, user]);
 
   const semesterSubjects = useMemo(
-    () =>
-      subjects.filter(
-        (subject) => subject.className === classForView && subject.semester === selectedSemester
-      ),
+    () => subjects.filter((subject) => subject.className === classForView && subject.semester === selectedSemester),
     [classForView, selectedSemester, subjects]
   );
 
   const semesterStudents = useMemo(
-    () => getStudentsForClass(students, classForView),
-    [classForView, students]
+    () => getStudentsForClassSemester(students, classForView, selectedSemester),
+    [classForView, selectedSemester, students]
   );
 
   const marksForSemester = useMemo(
-    () =>
-      marks.filter(
-        (mark) => mark.className === classForView && mark.semester === selectedSemester
-      ),
+    () => marks.filter((mark) => mark.className === classForView && mark.semester === selectedSemester),
     [classForView, marks, selectedSemester]
   );
 
   const studentSemesterMarks = useMemo(
-    () =>
-      marksForSemester.filter((mark) => mark.studentId === user?.id),
+    () => marksForSemester.filter((mark) => mark.studentId === user?.id),
     [marksForSemester, user?.id]
   );
 
   const semesterIsPublished = isSemesterPublished(semesterSubjects);
+  const selectedSemesterStatus = useMemo(
+    () => statuses.find((item) => item.className === classForView && item.semester === selectedSemester),
+    [classForView, selectedSemester, statuses]
+  );
+
+  useEffect(() => {
+    setScheduledPublishAt(selectedSemesterStatus?.publishAt ? selectedSemesterStatus.publishAt.slice(0, 16) : '');
+  }, [selectedSemesterStatus?.publishAt]);
 
   const handleDraftChange = (studentId: string, field: keyof DraftRow, value: string) => {
     setDraftRows((current) => ({
@@ -153,12 +169,24 @@ export default function ResultsPage() {
     }));
   };
 
+  const refreshStatus = async () => {
+    const [subjectData, markData, statusData] = await Promise.all([
+      listResultSubjects(),
+      listResultMarks(),
+      listResultSemesterStatus(),
+    ]);
+
+    setSubjects(subjectData);
+    setMarks(markData);
+    setStatuses(statusData);
+  };
+
   const handleSaveFacultyMarks = async () => {
     if (!selectedFacultySubject) return;
     setSaving(true);
 
     try {
-      const classStudents = getStudentsForClass(students, selectedFacultySubject.className);
+      const classStudents = getStudentsForClassSemester(students, selectedFacultySubject.className, selectedFacultySubject.semester);
       const savedMarks = await Promise.all(
         classStudents.map((student) =>
           saveResultMark({
@@ -166,7 +194,7 @@ export default function ResultsPage() {
             subjectId: selectedFacultySubject.id,
             internalMax: 20,
             internalMarks: draftRows[student.id]?.internalMarks ?? 0,
-            externalMax: 30,
+            externalMax: 80,
             externalMarks: draftRows[student.id]?.externalMarks ?? 0,
             facultyId: selectedFacultySubject.facultyId,
             semester: selectedFacultySubject.semester,
@@ -179,6 +207,7 @@ export default function ResultsPage() {
         const untouched = current.filter((mark) => mark.subjectId !== selectedFacultySubject.id);
         return [...untouched, ...savedMarks];
       });
+      await refreshStatus();
       setToast({ id: Date.now(), message: 'Marks saved successfully.' });
     } finally {
       setSaving(false);
@@ -190,10 +219,26 @@ export default function ResultsPage() {
     await handleSaveFacultyMarks();
     const publishedSubject = await publishResultSubject(selectedFacultySubject.id);
     setSubjects((current) => current.map((subject) => (subject.id === publishedSubject.id ? publishedSubject : subject)));
-    setMarks((current) =>
-      current.map((mark) => (mark.subjectId === publishedSubject.id ? { ...mark, published: true } : mark))
-    );
+    setMarks((current) => current.map((mark) => (mark.subjectId === publishedSubject.id ? { ...mark, published: true } : mark)));
+    await refreshStatus();
     setToast({ id: Date.now(), message: 'Subject result published successfully.' });
+  };
+
+  const handleSchedulePublish = async () => {
+    if (!classForView || !selectedSemester) return;
+
+    const scheduled = await scheduleResultSemesterPublish(
+      classForView,
+      selectedSemester,
+      scheduledPublishAt ? new Date(scheduledPublishAt).toISOString() : null
+    );
+
+    setStatuses((current) => {
+      const rest = current.filter((item) => !(item.className === scheduled.className && item.semester === scheduled.semester));
+      return [...rest, scheduled];
+    });
+    await refreshStatus();
+    setToast({ id: Date.now(), message: scheduledPublishAt ? 'Result publish scheduled.' : 'Result publish schedule cleared.' });
   };
 
   const renderFacultyView = () => {
@@ -207,7 +252,7 @@ export default function ResultsPage() {
       );
     }
 
-    const classStudents = getStudentsForClass(students, selectedFacultySubject.className);
+    const classStudents = getStudentsForClassSemester(students, selectedFacultySubject.className, selectedFacultySubject.semester);
     const isPublished = selectedFacultySubject.published;
 
     return (
@@ -217,7 +262,7 @@ export default function ResultsPage() {
             <div>
               <CardTitle>Marks Entry</CardTitle>
               <CardDescription>
-                Enter internal and external marks for your subject. Publishing locks all edits.
+                Enter internal and external marks for every student in your assigned semester subject. Publishing locks all edits.
               </CardDescription>
             </div>
             <div className="flex gap-3">
@@ -227,7 +272,7 @@ export default function ResultsPage() {
               </Button>
               <Button onClick={() => void handlePublish()} disabled={saving || isPublished}>
                 <FileCheck2 className="mr-2 h-4 w-4" />
-                {isPublished ? 'Published' : 'Publish Result'}
+                {isPublished ? 'Published' : 'Publish Subject'}
               </Button>
             </div>
           </CardHeader>
@@ -253,7 +298,7 @@ export default function ResultsPage() {
                 <TableRow>
                   <TableHead>Student</TableHead>
                   <TableHead>Internal (20)</TableHead>
-                  <TableHead>External (30)</TableHead>
+                  <TableHead>External (80)</TableHead>
                   <TableHead>Total</TableHead>
                   <TableHead>Grade</TableHead>
                 </TableRow>
@@ -288,7 +333,7 @@ export default function ResultsPage() {
                         <Input
                           type="number"
                           min={0}
-                          max={30}
+                          max={80}
                           value={draftRows[student.id]?.externalMarks ?? 0}
                           onChange={(event) => handleDraftChange(student.id, 'externalMarks', event.target.value)}
                           disabled={isPublished}
@@ -314,6 +359,7 @@ export default function ResultsPage() {
     }));
 
     const sgpiData = calculateSgpi(studentSemesterMarks);
+    const cgpa = calculateCgpa(marks.filter((mark) => mark.studentId === user?.id && mark.published));
 
     return (
       <div className="space-y-6">
@@ -322,7 +368,7 @@ export default function ResultsPage() {
             <div>
               <CardTitle>Semester Result</CardTitle>
               <CardDescription>
-                Mumbai University style grade card for {classForView} semester {selectedSemester}
+                Grade card for {classForView} semester {selectedSemester}
               </CardDescription>
             </div>
             <div className="flex gap-3">
@@ -347,7 +393,7 @@ export default function ResultsPage() {
             {!semesterIsPublished ? (
               <div className="flex items-center rounded-lg border border-dashed p-6 text-sm text-gray-600">
                 <Lock className="mr-3 h-4 w-4 text-amber-600" />
-                Result Not Published Yet
+                Result not published yet for this semester.
               </div>
             ) : (
               <div className="space-y-4">
@@ -382,7 +428,7 @@ export default function ResultsPage() {
                   </TableBody>
                 </Table>
 
-                <div className="grid gap-4 md:grid-cols-3">
+                <div className="grid gap-4 md:grid-cols-4">
                   <Card>
                     <CardHeader className="pb-2">
                       <CardTitle className="text-sm font-medium">Total Credits</CardTitle>
@@ -407,6 +453,14 @@ export default function ResultsPage() {
                       <div className="text-2xl font-bold text-indigo-600">{sgpiData.sgpi}</div>
                     </CardContent>
                   </Card>
+                  <Card>
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-sm font-medium">CGPA</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="text-2xl font-bold text-emerald-600">{cgpa}</div>
+                    </CardContent>
+                  </Card>
                 </div>
               </div>
             )}
@@ -422,6 +476,7 @@ export default function ResultsPage() {
       return {
         student,
         ...calculateSgpi(studentMarks),
+        cgpa: calculateCgpa(marks.filter((mark) => mark.studentId === student.id && mark.published)),
         publishedSubjects: studentMarks.filter((mark) => mark.published).length,
       };
     });
@@ -431,7 +486,7 @@ export default function ResultsPage() {
         <Card>
           <CardHeader>
             <CardTitle>Results Overview</CardTitle>
-            <CardDescription>View all marks, publish status, and semester SGPI across classes.</CardDescription>
+            <CardDescription>View semester-wise readiness, faculty completion, scheduled publication, and student SGPI/CGPA.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="grid gap-4 md:grid-cols-2">
@@ -482,11 +537,44 @@ export default function ResultsPage() {
                 </CardHeader>
                 <CardContent>
                   <div className={`text-2xl font-bold ${semesterIsPublished ? 'text-emerald-600' : 'text-amber-600'}`}>
-                    {semesterIsPublished ? 'Published' : 'Pending'}
+                    {semesterIsPublished ? 'Published' : selectedSemesterStatus?.allSubjectsReady ? 'Ready' : 'Pending'}
                   </div>
                 </CardContent>
               </Card>
             </div>
+
+            <Card className="border border-indigo-100 bg-indigo-50/40 shadow-none">
+              <CardHeader>
+                <CardTitle>Principal Publish Control</CardTitle>
+                <CardDescription>
+                  Schedule semester publishing and monitor which faculty members are still left to complete marks entry.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="grid gap-4 md:grid-cols-[1fr,auto]">
+                  <Input
+                    type="datetime-local"
+                    value={scheduledPublishAt}
+                    onChange={(event) => setScheduledPublishAt(event.target.value)}
+                  />
+                  <Button onClick={() => void handleSchedulePublish()}>
+                    {scheduledPublishAt ? 'Schedule Publish' : 'Clear Schedule'}
+                  </Button>
+                </div>
+                <div className="rounded-lg border bg-white p-4 text-sm text-gray-600">
+                  <p className="font-medium text-gray-900">
+                    {selectedSemesterStatus?.publishAt
+                      ? `Scheduled publish: ${new Date(selectedSemesterStatus.publishAt).toLocaleString()}`
+                      : 'No publish schedule set'}
+                  </p>
+                  <p className="mt-1">
+                    {selectedSemesterStatus?.allSubjectsReady
+                      ? 'All faculty are ready for publication.'
+                      : `Pending faculty: ${selectedSemesterStatus?.pendingFacultyNames.join(', ') || 'Unknown'}`}
+                  </p>
+                </div>
+              </CardContent>
+            </Card>
 
             <Table>
               <TableHeader>
@@ -495,6 +583,7 @@ export default function ResultsPage() {
                   <TableHead>Published Subjects</TableHead>
                   <TableHead>Total Credits</TableHead>
                   <TableHead>SGPI</TableHead>
+                  <TableHead>CGPA</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -506,9 +595,12 @@ export default function ResultsPage() {
                         <p className="text-xs text-gray-500">Roll {item.student.rollNo}</p>
                       </div>
                     </TableCell>
-                    <TableCell>{item.publishedSubjects}/{semesterSubjects.length}</TableCell>
+                    <TableCell>
+                      {item.publishedSubjects}/{semesterSubjects.length}
+                    </TableCell>
                     <TableCell>{item.totalCredits}</TableCell>
                     <TableCell>{item.sgpi}</TableCell>
+                    <TableCell>{item.cgpa}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -521,18 +613,28 @@ export default function ResultsPage() {
                   <TableHead>Course Title</TableHead>
                   <TableHead>Faculty</TableHead>
                   <TableHead>Credits</TableHead>
+                  <TableHead>Marks Filled</TableHead>
+                  <TableHead>Ready</TableHead>
+                  <TableHead>Publish At</TableHead>
                   <TableHead>Status</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {semesterSubjects.map((subject) => (
-                  <TableRow key={subject.id}>
-                    <TableCell>{subject.courseCode}</TableCell>
-                    <TableCell>{subject.courseTitle}</TableCell>
-                    <TableCell>{faculty.find((item) => item.id === subject.facultyId)?.name ?? '-'}</TableCell>
-                    <TableCell>{subject.credits}</TableCell>
-                    <TableCell className={subject.published ? 'text-emerald-600' : 'text-amber-600'}>
-                      {subject.published ? 'Published' : 'Pending'}
+                {(selectedSemesterStatus?.subjects ?? []).map((item) => (
+                  <TableRow key={item.subject.id}>
+                    <TableCell>{item.subject.courseCode}</TableCell>
+                    <TableCell>{item.subject.courseTitle}</TableCell>
+                    <TableCell>{item.facultyName}</TableCell>
+                    <TableCell>{item.subject.credits}</TableCell>
+                    <TableCell>
+                      {item.marksEntered}/{item.expectedStudents}
+                    </TableCell>
+                    <TableCell className={item.readyToPublish ? 'text-emerald-600' : 'text-amber-600'}>
+                      {item.readyToPublish ? 'Ready' : `${item.pendingStudentCount} pending`}
+                    </TableCell>
+                    <TableCell>{item.subject.publishAt ? new Date(item.subject.publishAt).toLocaleString() : '-'}</TableCell>
+                    <TableCell className={item.subject.published ? 'text-emerald-600' : 'text-amber-600'}>
+                      {item.subject.published ? 'Published' : 'Pending'}
                     </TableCell>
                   </TableRow>
                 ))}
@@ -553,10 +655,10 @@ export default function ResultsPage() {
         </h1>
         <p className="text-gray-500">
           {user?.role === 'faculty'
-            ? 'Enter marks for your subjects and publish results once they are final.'
+            ? 'Enter internal and external marks for semester-aware subjects and publish them when they are final.'
             : user?.role === 'student'
-              ? 'View your grade card after every subject in the semester is published.'
-              : 'Monitor marks entry, publication status, and semester results across all classes.'}
+              ? 'View your semester result with SGPI and overall CGPA after publication.'
+              : 'Monitor marks entry, faculty completion, semester readiness, and scheduled publishing across classrooms.'}
         </p>
       </div>
 

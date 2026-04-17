@@ -12,7 +12,7 @@ import { Input } from '@/components/ui/input';
 import { Toast, type ToastData } from '@/components/ui/toast';
 import { ScheduleCalendar } from '@/components/ScheduleCalendar';
 import { getStoredUser } from '@/lib/auth';
-import { formatLocalDate } from '@/lib/utils';
+import { formatLocalDate, rangesOverlap } from '@/lib/utils';
 import {
   createLocation,
   createTimetableEntry,
@@ -134,10 +134,7 @@ export default function TimetablePage() {
 
   const visibleTimetable = useMemo(() => {
     if (!user) return [];
-    if (user.role === 'admin') return timetable;
-    if (user.role === 'faculty') {
-      return timetable.filter((entry) => entry.facultyId === user.id);
-    }
+    if (user.role === 'admin' || user.role === 'faculty') return timetable;
     return timetable.filter((entry) => user.classes.includes(entry.className));
   }, [timetable, user]);
 
@@ -152,6 +149,20 @@ export default function TimetablePage() {
   const markedDates = useMemo(
     () => Array.from(new Set(visibleTimetable.map((entry) => entry.date))),
     [visibleTimetable]
+  );
+
+  const timetableConflicts = useMemo(
+    () =>
+      timetable
+        .filter(
+          (entry) =>
+            entry.date === timetableForm.date &&
+            entry.locationId === timetableForm.locationId &&
+            entry.id !== editingTimetableId &&
+            rangesOverlap(entry.startTime, entry.endTime, timetableForm.startTime, timetableForm.endTime)
+        )
+        .sort((first, second) => first.startTime.localeCompare(second.startTime)),
+    [editingTimetableId, timetable, timetableForm.date, timetableForm.endTime, timetableForm.locationId, timetableForm.startTime]
   );
 
   const showToast = (message: string) => {
@@ -370,13 +381,15 @@ export default function TimetablePage() {
     user?.role === 'admin'
       ? 'Timetable & Events'
       : user?.role === 'faculty'
-        ? 'My Timetable'
+        ? 'Campus Timetable'
         : 'My Timetable';
 
   const pageDescription =
     user?.role === 'student'
       ? 'View your lecture schedule for the selected date.'
-      : 'Manage lecture schedules using one shared timetable across all dashboards.';
+      : user?.role === 'faculty'
+        ? 'See the full campus timetable, manage your lectures, and spot classroom overlaps before they cause clashes.'
+        : 'Manage lecture schedules using one shared timetable across all dashboards.';
 
   return (
     <div className="space-y-6">
@@ -582,6 +595,31 @@ export default function TimetablePage() {
                     </div>
                   </div>
 
+                  {timetableConflicts.length > 0 && (
+                    <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+                      <p className="font-medium">Classroom overlap warning</p>
+                      <p className="mt-1">
+                        Another lecture already uses this room during the selected time. You can still save if this overlap is intentional.
+                      </p>
+                      <div className="mt-3 space-y-2">
+                        {timetableConflicts.map((entry) => {
+                          const teacher = faculty.find((item) => item.id === entry.facultyId);
+                          const location = locations.find((item) => item.id === entry.locationId);
+                          return (
+                            <div key={entry.id} className="rounded border border-amber-200 bg-white px-3 py-2">
+                              <p className="font-medium text-gray-900">
+                                {entry.subject} • {entry.className}
+                              </p>
+                              <p className="text-xs text-gray-600">
+                                {entry.startTime}-{entry.endTime} • {teacher?.name ?? 'Unknown faculty'} • {location?.name ?? 'Unknown room'}
+                              </p>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
                   <div className="flex gap-3">
                     <Button type="submit" disabled={timetableSubmitting}>
                       {timetableSubmitting ? 'Saving...' : timetableMode === 'create' ? 'Create Lecture' : 'Save Changes'}
@@ -601,7 +639,9 @@ export default function TimetablePage() {
               <CardDescription>
                 {user?.role === 'student'
                   ? 'Read-only lecture plan for your class.'
-                  : 'Live lecture schedule shared across admin, faculty, and student views.'}
+                  : user?.role === 'faculty'
+                    ? 'See all scheduled lectures for the day. Your own lectures remain editable, while other faculty schedules are view-only.'
+                    : 'Live lecture schedule shared across admin, faculty, and student views.'}
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
@@ -615,6 +655,7 @@ export default function TimetablePage() {
                 entriesForSelectedDate.map((entry) => {
                   const location = locations.find((item) => item.id === entry.locationId);
                   const teacher = faculty.find((item) => item.id === entry.facultyId);
+                  const canEditEntry = user?.role === 'admin' || (user?.role === 'faculty' && entry.facultyId === user.id);
 
                   return (
                     <div key={entry.id} className="rounded-xl border bg-white p-4 shadow-sm">
@@ -633,7 +674,7 @@ export default function TimetablePage() {
                           </div>
                         </div>
 
-                        {canManageTimetable && (
+                        {canManageTimetable && canEditEntry && (
                           <div className="flex gap-2">
                             <Button variant="ghost" size="sm" onClick={() => startEditTimetable(entry)}>
                               <Edit2 className="h-4 w-4" />

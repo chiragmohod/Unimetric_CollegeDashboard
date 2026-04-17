@@ -282,7 +282,7 @@
       "authorId": "admin-1",
       "createdAt": "2026-03-13T10:00:00.000Z",
       "updatedAt": "2026-03-13T10:00:00.000Z",
-      "authorName": "Kuldeep Yadav",
+      "authorName": "Admin User",
       "authorRole": "admin",
       "classNames": [],
       "targetScope": "all"
@@ -310,7 +310,7 @@
       "authorId": "admin-1",
       "createdAt": "2026-03-11T09:00:00.000Z",
       "updatedAt": "2026-03-11T09:00:00.000Z",
-      "authorName": "Kuldeep Yadav",
+      "authorName": "Admin User",
       "authorRole": "admin",
       "classNames": [
         "SY-B"
@@ -340,7 +340,7 @@
       "authorId": "admin-1",
       "createdAt": "2026-03-15T23:02:40.469Z",
       "updatedAt": "2026-03-15T23:02:40.469Z",
-      "authorName": "Kuldeep Yadav",
+      "authorName": "Admin User",
       "authorRole": "admin",
       "classNames": [],
       "targetScope": "all"
@@ -353,7 +353,7 @@
       "authorId": "admin-1",
       "createdAt": "2026-03-16T08:10:18.032Z",
       "updatedAt": "2026-03-16T08:10:18.032Z",
-      "authorName": "Kuldeep Yadav",
+      "authorName": "Admin User",
       "authorRole": "admin",
       "classNames": [
         "B.S.c CS-A"
@@ -2014,6 +2014,16 @@
         ],
         "facultyId": "ef6a9e70-cc86-40b4-aa19-3ebe5b1a04ea",
         "totalStudents": 20
+      },
+      {
+        "id": "7349c299-e265-4591-9261-faaab4fa2a01",
+        "name": "ZZ-ARCHIVED-PortfolioQA39966",
+        "divisions": [
+          "A"
+        ],
+        "totalStudents": 0,
+        "subjects": [],
+        "facultyId": null
       }
     ],
     "isActive": true
@@ -2155,6 +2165,140 @@
       "mimeType": "application/pdf",
       "fileSize": 4590410,
       "createdAt": "2026-04-03T08:38:18.706Z"
+    }
+  ],
+  "logs": [
+    {
+      "id": "b420f16a-9eba-4129-ae75-c9334b7d449c",
+      "createdAt": "2026-04-16T23:15:32.304Z",
+      "action": "update",
+      "entity": "academic-class",
+      "message": "Class ZZ-ARCHIVED-PortfolioQA39966 updated.",
+      "actorId": "admin-1",
+      "actorName": "Admin User",
+      "actorRole": "admin",
+      "metadata": {
+        "className": "ZZ-ARCHIVED-PortfolioQA39966",
+        "subjectCount": 0
+      }
+    },
+    {
+      "id": "03046153-2d05-4d03-9618-2f16d791bb9d",
+      "createdAt": "2026-04-16T23:15:32.295Z",
+      "action": "delete",
+      "entity": "timetable",
+      "message": "Lecture 9e989793-9ee5-4ff0-a423-a73be8388fce deleted from timetable.",
+      "actorId": "system",
+      "actorName": "System",
+      "actorRole": "system",
+      "metadata": {
+        "timetableEntryId": "9e989793-9ee5-4ff0-a423-a73be8388fce"
+      }
+    },
+    {
+      "id": "e3f9aa4d-280f-4198-a37f-7e6b23649fb0",
+      "createdAt": "2026-04-16T23:15:32.287Z",
+      "action": "delete",
+      "entity": "timetable",
+      "message": "Lecture 5461d4f8-e983-40b4-ad67-ea0b2eb8fa79 deleted from timetable.",
+      "actorId": "system",
+      "actorName": "System",
+      "actorRole": "system",
+      "metadata": {
+        "timetableEntryId": "5461d4f8-e983-40b4-ad67-ea0b2eb8fa79"
+      }
+    },
+    {
+      "id": "cfc35746-eda9-4748-b1e0-7221b9eb8d8a",
+      "createdAt": "2026-04-16T23:15:32.202Z",
+      "action": "update",
+      "entity": "attendance",
+      "message": "Attendance session updated for CloudQA95438 in PortfolioQA39966-A.",
+      "actorId": "F001",
+      "actorName": "Dr. Sarah Smith",
+      "actorRole": "faculty",
+      "metadata": {
+        "attendanceSessionId": "d71eebf9-c0a9-4329-8dc7-96025e76465d",
+        "punchInEnabled": false
+      }
+    },
+    {
+      "id": "96cb6790-3c4c-4a89-8da3-e37797461ca9",
+      "createdAt": "2026-04-16T23:15:32.194Z",
+      "action": "create",
+      "entity": "attendance",
+      "message": "Attendance session created for CloudQA95438 in PortfolioQA39966-A.",
+      "actorId": "F001",
+      "actorName": "Dr. Sarah Smith",
+      "actorRole": "faculty",
+      "metadata": {
+        "attendanceSessionId": "d71eebf9-c0a9-4329-8dc7-96025e76465d",
+        "timetableEntryId": "5461d4f8-e983-40b4-ad67-ea0b2eb8fa79",
+        "punchInEnabled": true
+      }
+    },
+    {
+      "id": "5459b38b-3b8d-4631-a103-0165347e7f47",
+      "createdAt": "2026-04-16T23:15:32.180Z",
+      "action": "create",
+      "entity": "timetable",
+      "message": "Lecture CloudQA95438 scheduled for PortfolioQA39966-A.",
+      "actorId": "F001",
+      "actorName": "Dr. Sarah Smith",
+      "actorRole": "faculty",
+      "metadata": {
+        "timetableEntryId": "9e989793-9ee5-4ff0-a423-a73be8388fce",
+        "className": "PortfolioQA39966-A",
+        "locationId": "loc-101",
+        "date": "2026-04-17",
+        "startTime": "10:30",
+        "endTime": "11:30"
+      }
+    },
+    {
+      "id": "f9e670e0-8803-44a7-a901-40cc15009e6e",
+      "createdAt": "2026-04-16T23:15:32.173Z",
+      "action": "create",
+      "entity": "timetable",
+      "message": "Lecture CloudQA95438 scheduled for PortfolioQA39966-A.",
+      "actorId": "F001",
+      "actorName": "Dr. Sarah Smith",
+      "actorRole": "faculty",
+      "metadata": {
+        "timetableEntryId": "5461d4f8-e983-40b4-ad67-ea0b2eb8fa79",
+        "className": "PortfolioQA39966-A",
+        "locationId": "loc-101",
+        "date": "2026-04-17",
+        "startTime": "10:00",
+        "endTime": "11:00"
+      }
+    },
+    {
+      "id": "780fd2af-3263-4338-b45a-7de3edcc61a6",
+      "createdAt": "2026-04-16T23:15:32.154Z",
+      "action": "create",
+      "entity": "academic-class",
+      "message": "Class PortfolioQA39966 created with 1 subjects.",
+      "actorId": "admin-1",
+      "actorName": "Admin User",
+      "actorRole": "admin",
+      "metadata": {
+        "className": "PortfolioQA39966",
+        "subjectCount": 1
+      }
+    },
+    {
+      "id": "9f39b7f7-636b-4acb-99a9-a89704fdb27e",
+      "createdAt": "2026-04-16T23:15:32.053Z",
+      "action": "login",
+      "entity": "auth",
+      "message": "Admin signed in successfully.",
+      "actorId": "admin-1",
+      "actorName": "Admin User",
+      "actorRole": "admin",
+      "metadata": {
+        "username": "admin"
+      }
     }
   ]
 }

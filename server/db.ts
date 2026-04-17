@@ -25,6 +25,9 @@ export interface Student {
   class: string;
   rollNo: string;
   feePaid?: number;
+  semester: number;
+  subjects: string[];
+  cgpa?: number;
 }
 
 export interface AcademicClass {
@@ -140,6 +143,7 @@ export interface ResultSubject {
   facultyId: string;
   credits: number;
   published: boolean;
+  publishAt?: string | null;
 }
 
 export interface ResultMark {
@@ -177,6 +181,45 @@ export interface StudyMaterial {
   createdAt: string;
 }
 
+export interface OperationLog {
+  id: string;
+  action: string;
+  entity: string;
+  message: string;
+  actorId: string;
+  actorName: string;
+  actorRole: 'system' | 'admin' | 'faculty' | 'student';
+  createdAt: string;
+  metadata?: Record<string, string | number | boolean | null>;
+}
+
+export interface DataArchive {
+  id: string;
+  format: 'json-snapshot';
+  fileName: string;
+  filePath: string;
+  createdAt: string;
+  createdById: string;
+  createdByName: string;
+  createdByRole: 'admin';
+  academicYearLabel: string;
+  summary: {
+    classes: number;
+    faculty: number;
+    students: number;
+    locations: number;
+    timetableEntries: number;
+    attendanceSessions: number;
+    notices: number;
+    doubts: number;
+    resultSubjects: number;
+    resultMarks: number;
+    studyMaterials: number;
+    financeExpenses: number;
+    financeRevenues: number;
+  };
+}
+
 export interface DB {
   academicYear: AcademicYear;
   faculty: Faculty[];
@@ -190,6 +233,8 @@ export interface DB {
   resultSubjects: ResultSubject[];
   resultMarks: ResultMark[];
   studyMaterials: StudyMaterial[];
+  logs: OperationLog[];
+  archives: DataArchive[];
 }
 
 export async function readDB(): Promise<DB> {

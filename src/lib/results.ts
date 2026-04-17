@@ -41,3 +41,23 @@ export function calculateSgpi(marks: ResultMark[]) {
 export function getStudentsForClass(students: Student[], className: string) {
   return students.filter((student) => student.class === className);
 }
+
+export function getStudentsForClassSemester(students: Student[], className: string, semester: number) {
+  return students.filter((student) => student.class === className && student.semester === semester);
+}
+
+export function calculateCgpa(marks: ResultMark[]) {
+  const groupedBySemester = new Map<number, ResultMark[]>();
+
+  marks.forEach((mark) => {
+    const current = groupedBySemester.get(mark.semester) ?? [];
+    current.push(mark);
+    groupedBySemester.set(mark.semester, current);
+  });
+
+  const sgpis = Array.from(groupedBySemester.values())
+    .map((semesterMarks) => calculateSgpi(semesterMarks).sgpi)
+    .filter((value) => value > 0);
+
+  return sgpis.length === 0 ? 0 : Number((sgpis.reduce((sum, item) => sum + item, 0) / sgpis.length).toFixed(2));
+}

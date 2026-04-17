@@ -109,7 +109,7 @@ export default function Login() {
               </Button>
 
               <div className="rounded-lg border border-indigo-100 bg-indigo-50 p-3 text-sm text-indigo-700">
-                Admin login: `kuldeepyadav` / `12345678`
+                Admin login: `admin` / `12345678`
               </div>
             </form>
           </CardContent>

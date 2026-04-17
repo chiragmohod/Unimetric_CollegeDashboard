@@ -1,0 +1,72 @@
+# Dependencies
+node_modules
+npm-debug.log
+yarn-error.log
+
+# Testing
+coverage
+.nyc_output
+
+# Development
+.dev.*
+.serve.*
+src
+
+# VCS
+.git
+.gitignore
+.gitattributes
+
+# CI/CD
+.github
+.gitlab-ci.yml
+.travis.yml
+
+# Documentation
+README.md
+CONTRIBUTING.md
+DEPLOYMENT.md
+ARCHITECTURE.md
+SECURITY.md
+docs
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+*~
+.DS_Store
+*.sublime-workspace
+
+# Build outputs
+dist (will be built in container)
+build
+
+# CI
+.circleci
+
+# Docker
+docker-compose*.yml
+Dockerfile
+.dockerignore
+
+# Environment
+.env
+.env.*.local
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Archives
+*.zip
+*.tar.gz
+*.rar
+
+# Other
+unimetrics.zip
+*.pdf
+uploads
+tmp
+temp

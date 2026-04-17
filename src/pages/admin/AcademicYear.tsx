@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { CalendarDays, Edit2, Play, Plus, Square } from 'lucide-react';
+import { AlertTriangle, CalendarDays, Download, Edit2, Play, Plus, Square } from 'lucide-react';
 import {
   Card,
   CardContent,
@@ -21,13 +21,17 @@ import { Toast, type ToastData } from '@/components/ui/toast';
 import { MultiSelectChips } from '@/components/ui/multi-select-chips';
 import {
   addAcademicClass,
+  getArchiveDownloadUrl,
   getAcademicYear,
   listFaculty,
+  listArchives,
+  runAcademicKillSwitch,
   startAcademicYear,
   stopAcademicYear,
   updateAcademicClass,
   type AcademicClass,
   type AcademicYear as AcademicYearType,
+  type DataArchive,
   type Faculty,
 } from '@/lib/api';
 
@@ -86,13 +90,24 @@ export default function AcademicYear() {
   const [classErrors, setClassErrors] = useState<ClassFormErrors>({});
   const [classSubmitting, setClassSubmitting] = useState(false);
   const [toast, setToast] = useState<ToastData | null>(null);
+  const [showKillSwitchPanel, setShowKillSwitchPanel] = useState(false);
+  const [principalPassword, setPrincipalPassword] = useState('');
+  const [killSwitchError, setKillSwitchError] = useState('');
+  const [killSwitchSubmitting, setKillSwitchSubmitting] = useState(false);
+  const [archives, setArchives] = useState<DataArchive[]>([]);
+
+  const subjectOptions = React.useMemo(() => {
+    const dynamicSubjects = yearData?.classes.flatMap((item) => item.subjects) ?? [];
+    return Array.from(new Set([...subjectCatalog, ...dynamicSubjects])).sort((first, second) => first.localeCompare(second));
+  }, [yearData]);
 
   const fetchPageData = useCallback(async () => {
     setLoading(true);
     try {
-      const [academicYear, facultyData] = await Promise.all([getAcademicYear(), listFaculty()]);
+      const [academicYear, facultyData, archiveData] = await Promise.all([getAcademicYear(), listFaculty(), listArchives()]);
       setYearData(academicYear);
       setFaculty(facultyData);
+      setArchives(archiveData);
       setYearInput(academicYear.year);
     } catch (error) {
       console.error('Failed to load academic year', error);
@@ -121,10 +136,8 @@ export default function AcademicYear() {
 
     try {
       if (yearData.isActive) {
-        const updated = await stopAcademicYear();
-        setYearData(updated);
-        setYearInput(updated.year);
-        showToast('Academic cycle stopped successfully.');
+        setShowKillSwitchPanel((current) => !current);
+        setKillSwitchError('');
       } else {
         if (!yearInput.trim()) return;
         const updated = await startAcademicYear(yearInput.trim());
@@ -134,6 +147,55 @@ export default function AcademicYear() {
       }
     } catch (error) {
       console.error('Failed to toggle academic cycle', error);
+    }
+  };
+
+  const handleKillSwitch = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!principalPassword.trim()) {
+      setKillSwitchError('Principal password is required.');
+      return;
+    }
+
+    setKillSwitchSubmitting(true);
+    setKillSwitchError('');
+
+    try {
+      const result = await runAcademicKillSwitch(principalPassword.trim());
+      setYearData(result.academicYear);
+      setYearInput(result.academicYear.year);
+      setPrincipalPassword('');
+      setShowKillSwitchPanel(false);
+      setArchives((current) => [
+        {
+          ...result.archive,
+          createdById: 'admin-1',
+          createdByName: 'Admin User',
+          createdByRole: 'admin',
+          summary: {
+            classes: 0,
+            faculty: 0,
+            students: 0,
+            locations: 0,
+            timetableEntries: 0,
+            attendanceSessions: 0,
+            notices: 0,
+            doubts: 0,
+            resultSubjects: 0,
+            resultMarks: 0,
+            studyMaterials: 0,
+            financeExpenses: 0,
+            financeRevenues: 0,
+          },
+        },
+        ...current,
+      ]);
+      void fetchPageData();
+      showToast(`Kill switch complete. Archive saved as ${result.archive.fileName}.`);
+    } catch (error) {
+      setKillSwitchError(error instanceof Error ? error.message : 'Kill switch failed.');
+    } finally {
+      setKillSwitchSubmitting(false);
     }
   };
 
@@ -245,7 +307,7 @@ export default function AcademicYear() {
           {isCycleActive ? (
             <>
               <Square className="h-4 w-4" />
-              Stop Academic Cycle
+              Kill Switch
             </>
           ) : (
             <>
@@ -255,6 +317,57 @@ export default function AcademicYear() {
           )}
         </Button>
       </div>
+
+      {showKillSwitchPanel && isCycleActive && (
+        <Card className="border border-rose-200 bg-rose-50">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-rose-900">
+              <AlertTriangle className="h-5 w-5" />
+              Principal Kill Switch
+            </CardTitle>
+            <CardDescription className="text-rose-800">
+              This will archive the current dataset as a JSON snapshot and then wipe all live classes, users, schedules, attendance, finance, notices, results, materials, and logs.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <form className="space-y-4" onSubmit={handleKillSwitch}>
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-rose-900">Principal Password</label>
+                <Input
+                  type="password"
+                  value={principalPassword}
+                  onChange={(event) => setPrincipalPassword(event.target.value)}
+                  placeholder="Enter principal password"
+                  disabled={killSwitchSubmitting}
+                />
+                <p className="text-xs text-rose-700">
+                  Required password: <span className="font-mono">MeowMeow@123</span>
+                </p>
+              </div>
+
+              {killSwitchError && <p className="text-sm text-rose-700">{killSwitchError}</p>}
+
+              <div className="flex gap-3">
+                <Button type="submit" variant="destructive" disabled={killSwitchSubmitting}>
+                  {killSwitchSubmitting ? 'Archiving and wiping...' : 'Archive and Wipe Data'}
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={killSwitchSubmitting}
+                  onClick={() => {
+                    setShowKillSwitchPanel(false);
+                    setPrincipalPassword('');
+                    setKillSwitchError('');
+                  }}
+                >
+                  Cancel
+                </Button>
+              </div>
+            </form>
+          </CardContent>
+        </Card>
+      )}
 
       <div className="grid gap-4 md:grid-cols-3">
         <Card className="md:col-span-1">
@@ -378,11 +491,13 @@ export default function AcademicYear() {
                     <MultiSelectChips
                       label="Subjects"
                       placeholder="Choose a subject"
-                      options={subjectCatalog}
+                      options={subjectOptions}
                       selected={classForm.subjects}
                       onChange={(next) => handleClassFieldChange('subjects', next)}
                       disabled={classSubmitting}
                       error={classErrors.subjects}
+                      allowCustom
+                      customPlaceholder="Type a new subject name"
                     />
 
                     <div className="flex gap-3">
@@ -450,6 +565,67 @@ export default function AcademicYear() {
           </CardContent>
         </Card>
       </div>
+
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between">
+          <div>
+            <CardTitle>Archive History</CardTitle>
+            <CardDescription>Principal can review and download every archived cycle snapshot created by the kill switch.</CardDescription>
+          </div>
+          <Button variant="outline" onClick={() => void fetchPageData()} disabled={loading}>
+            Refresh
+          </Button>
+        </CardHeader>
+        <CardContent>
+          {archives.length === 0 ? (
+            <div className="rounded-lg border border-dashed border-gray-200 p-6 text-center text-sm text-gray-500">
+              No archive snapshots have been created yet.
+            </div>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Archive File</TableHead>
+                  <TableHead>Academic Year</TableHead>
+                  <TableHead>Created At</TableHead>
+                  <TableHead>Snapshot Summary</TableHead>
+                  <TableHead className="text-right">Download</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {archives.map((archive) => (
+                  <TableRow key={archive.id}>
+                    <TableCell className="font-medium">{archive.fileName}</TableCell>
+                    <TableCell>{archive.academicYearLabel}</TableCell>
+                    <TableCell>
+                      {new Date(archive.createdAt).toLocaleString([], {
+                        day: 'numeric',
+                        month: 'short',
+                        year: 'numeric',
+                        hour: 'numeric',
+                        minute: '2-digit',
+                      })}
+                    </TableCell>
+                    <TableCell className="text-sm text-gray-600">
+                      {archive.summary.students} students, {archive.summary.faculty} faculty, {archive.summary.classes} classes, {archive.summary.timetableEntries} lectures
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => window.open(getArchiveDownloadUrl(archive.id), '_blank', 'noopener,noreferrer')}
+                      >
+                        <Download className="mr-2 h-4 w-4" />
+                        Download JSON
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }

@@ -66,6 +66,9 @@ export type Student = {
   class: string;
   rollNo: string;
   feePaid?: number;
+  semester: number;
+  subjects: string[];
+  cgpa?: number;
 };
 
 export type AcademicClass = {
@@ -84,6 +87,45 @@ export type AcademicYear = {
   classes: AcademicClass[];
 };
 
+export type KillSwitchResult = {
+  academicYear: AcademicYear;
+  archive: {
+    id: string;
+    format: 'json-snapshot';
+    fileName: string;
+    filePath: string;
+    createdAt: string;
+    academicYearLabel: string;
+  };
+};
+
+export type DataArchive = {
+  id: string;
+  format: 'json-snapshot';
+  fileName: string;
+  filePath: string;
+  createdAt: string;
+  createdById: string;
+  createdByName: string;
+  createdByRole: 'admin';
+  academicYearLabel: string;
+  summary: {
+    classes: number;
+    faculty: number;
+    students: number;
+    locations: number;
+    timetableEntries: number;
+    attendanceSessions: number;
+    notices: number;
+    doubts: number;
+    resultSubjects: number;
+    resultMarks: number;
+    studyMaterials: number;
+    financeExpenses: number;
+    financeRevenues: number;
+  };
+};
+
 export type Location = {
   id: string;
   name: string;
@@ -99,6 +141,18 @@ export type TimetableEntry = {
   date: string;
   startTime: string;
   endTime: string;
+};
+
+export type TimetableConflict = {
+  conflictingEntryId: string;
+  className: string;
+  subject: string;
+  facultyId: string;
+  locationId: string;
+  date: string;
+  startTime: string;
+  endTime: string;
+  conflictType: 'location';
 };
 
 export type AttendanceStatus = 'present' | 'absent' | 'late';
@@ -181,6 +235,7 @@ export type ResultSubject = {
   facultyId: string;
   credits: number;
   published: boolean;
+  publishAt?: string | null;
 };
 
 export type ResultMark = {
@@ -218,6 +273,39 @@ export type StudyMaterial = {
   createdAt: string;
 };
 
+export type OperationLog = {
+  id: string;
+  action: string;
+  entity: string;
+  message: string;
+  actorId: string;
+  actorName: string;
+  actorRole: 'system' | 'admin' | 'faculty' | 'student';
+  createdAt: string;
+  metadata?: Record<string, string | number | boolean | null>;
+};
+
+export type ResultSubjectStatus = {
+  subject: ResultSubject;
+  expectedStudents: number;
+  marksEntered: number;
+  completionRate: number;
+  readyToPublish: boolean;
+  pendingStudentCount: number;
+  facultyName: string;
+};
+
+export type ResultSemesterStatus = {
+  className: string;
+  semester: number;
+  publishAt?: string | null;
+  allSubjectsReady: boolean;
+  allSubjectsPublished: boolean;
+  pendingFacultyIds: string[];
+  pendingFacultyNames: string[];
+  subjects: ResultSubjectStatus[];
+};
+
 export async function getAcademicYear() {
   return apiFetch<AcademicYear>('/api/academic-year');
 }
@@ -240,6 +328,21 @@ export async function stopAcademicYear() {
   return apiFetch<AcademicYear>('/api/academic-year/stop', {
     method: 'POST',
   });
+}
+
+export async function runAcademicKillSwitch(password: string) {
+  return apiFetch<KillSwitchResult>('/api/academic-year/kill-switch', {
+    method: 'POST',
+    body: JSON.stringify({ password }),
+  });
+}
+
+export async function listArchives() {
+  return apiFetch<DataArchive[]>('/api/archives');
+}
+
+export function getArchiveDownloadUrl(id: string) {
+  return `${API_BASE}/api/archives/${id}/download`;
 }
 
 export async function addAcademicClass(input: {
@@ -458,6 +561,17 @@ export async function publishResultSubject(id: string) {
   });
 }
 
+export async function scheduleResultSemesterPublish(className: string, semester: number, publishAt: string | null) {
+  return apiFetch<ResultSemesterStatus>('/api/results/schedule-publish', {
+    method: 'POST',
+    body: JSON.stringify({ className, semester, publishAt }),
+  });
+}
+
+export async function listResultSemesterStatus() {
+  return apiFetch<ResultSemesterStatus[]>('/api/results/status');
+}
+
 export async function listStudyMaterials(role: Role, userId: string) {
   const query = new URLSearchParams({ role, userId });
   return apiFetch<StudyMaterial[]>(`/api/materials?${query.toString()}`);
@@ -497,4 +611,8 @@ export async function deleteStudyMaterial(id: string, userId: string, role: 'adm
     method: 'DELETE',
     body: JSON.stringify({ userId, role }),
   });
+}
+
+export async function listLogs() {
+  return apiFetch<OperationLog[]>('/api/logs');
 }

@@ -11,6 +11,7 @@ import AdminDashboard from './pages/admin/AdminDashboard';
 import AcademicYear from './pages/admin/AcademicYear';
 import FacultyManagement from './pages/admin/FacultyManagement';
 import AttendanceOverview from './pages/admin/AttendanceOverview';
+import AdminLogsPage from './pages/admin/AdminLogsPage';
 import FinancePage from './pages/admin/FinancePage';
 import FacultyDashboard from './pages/faculty/FacultyDashboard';
 import StudentManagement from './pages/faculty/StudentManagement';
@@ -42,7 +43,7 @@ export default function App() {
             <Route path="finance" element={<FinancePage />} />
             <Route path="results" element={<ResultsPage />} />
             <Route path="notices" element={<NoticePage />} />
-            <Route path="logs" element={<PlaceholderPage />} />
+            <Route path="logs" element={<AdminLogsPage />} />
           </Route>
         </Route>
 

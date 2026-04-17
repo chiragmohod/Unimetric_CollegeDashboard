@@ -10,6 +10,8 @@ type MultiSelectChipsProps = {
   onChange: (next: string[]) => void;
   disabled?: boolean;
   error?: string;
+  allowCustom?: boolean;
+  customPlaceholder?: string;
 };
 
 export function MultiSelectChips({
@@ -20,9 +22,12 @@ export function MultiSelectChips({
   onChange,
   disabled,
   error,
+  allowCustom,
+  customPlaceholder,
 }: MultiSelectChipsProps) {
   const availableOptions = options.filter((option) => !selected.includes(option));
   const [pending, setPending] = React.useState('');
+  const [customValue, setCustomValue] = React.useState('');
 
   React.useEffect(() => {
     if (!availableOptions.includes(pending)) {
@@ -33,6 +38,17 @@ export function MultiSelectChips({
   const handleAdd = () => {
     if (!pending) return;
     onChange([...selected, pending]);
+  };
+
+  const handleAddCustom = () => {
+    const normalized = customValue.trim();
+    if (!normalized) return;
+    if (selected.includes(normalized)) {
+      setCustomValue('');
+      return;
+    }
+    onChange([...selected, normalized]);
+    setCustomValue('');
   };
 
   const handleRemove = (value: string) => {
@@ -60,6 +76,20 @@ export function MultiSelectChips({
           Add
         </Button>
       </div>
+      {allowCustom && (
+        <div className="flex gap-2">
+          <input
+            value={customValue}
+            onChange={(event) => setCustomValue(event.target.value)}
+            disabled={disabled}
+            placeholder={customPlaceholder ?? 'Add custom item'}
+            className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 disabled:cursor-not-allowed disabled:opacity-50"
+          />
+          <Button type="button" variant="outline" onClick={handleAddCustom} disabled={disabled || !customValue.trim()}>
+            Add Custom
+          </Button>
+        </div>
+      )}
       <div className="flex min-h-10 flex-wrap gap-2 rounded-md border border-dashed border-gray-200 bg-gray-50 p-3">
         {selected.length === 0 && <span className="text-sm text-gray-400">No items selected</span>}
         {selected.map((value) => (

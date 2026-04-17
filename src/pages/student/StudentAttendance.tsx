@@ -37,6 +37,8 @@ export default function StudentAttendance() {
             class: user.classes[0] ?? '',
             rollNo: '',
             password: '',
+            semester: 1,
+            subjects: user.subjects,
           },
         ]
       : [],

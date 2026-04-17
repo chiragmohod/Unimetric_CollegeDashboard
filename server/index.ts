@@ -1,7 +1,10 @@
 import express from 'express';
 import cors from 'cors';
 import { randomUUID } from 'crypto';
+import fs from 'fs/promises';
 import multer from 'multer';
+import { dirname, join } from 'path';
+import { fileURLToPath } from 'url';
 import {
   readDB,
   writeDB,
@@ -20,12 +23,17 @@ import {
   type ResultSubject,
   type ResultMark,
   type StudyMaterial,
+  type OperationLog,
+  type DataArchive,
 } from './db.js';
 import { createSignedStorageUrl, getStorageBucketName, removeFileFromStorage, uploadFileToStorage } from './supabase.js';
 
 const app = express();
 app.use(cors());
 app.use(express.json());
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const archiveDirectory = join(__dirname, 'archives');
+const PRINCIPAL_KILL_SWITCH_PASSWORD = 'MeowMeow@123';
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: {
@@ -52,8 +60,8 @@ function getGradeMeta(totalMarks: number) {
 
 const ADMIN_CREDENTIALS = {
   id: 'admin-1',
-  name: 'Kuldeep Yadav',
-  username: 'kuldeepyadav',
+  name: 'Admin User',
+  username: 'admin',
   password: '12345678',
   role: 'admin' as const,
 };
@@ -137,8 +145,216 @@ function buildMaterialStoragePath(materialId: string, className: string, subject
   return `materials/${safeSegment(className)}/${safeSegment(subject)}/${materialId}-${safeSegment(baseName)}.${extension}`;
 }
 
+function appendLog(input: Omit<OperationLog, 'id' | 'createdAt'>) {
+  const entry: OperationLog = {
+    id: randomUUID(),
+    createdAt: new Date().toISOString(),
+    ...input,
+  };
+
+  db.logs.unshift(entry);
+  db.logs = db.logs.slice(0, 500);
+}
+
+function getStudentsForClassSemester(className: string, semester: number) {
+  return db.students.filter((student) => student.class === className && student.semester === semester);
+}
+
+function buildResultSubjectStatus(subject: ResultSubject) {
+  const expectedStudents = getStudentsForClassSemester(subject.className, subject.semester);
+  const marksEntered = db.resultMarks.filter((mark) => mark.subjectId === subject.id).length;
+  const completionRate =
+    expectedStudents.length === 0 ? 0 : Number(((marksEntered / expectedStudents.length) * 100).toFixed(2));
+  const facultyName = db.faculty.find((item) => item.id === subject.facultyId)?.name ?? 'Unknown faculty';
+
+  return {
+    subject,
+    expectedStudents: expectedStudents.length,
+    marksEntered,
+    completionRate,
+    readyToPublish: expectedStudents.length > 0 && marksEntered >= expectedStudents.length,
+    pendingStudentCount: Math.max(expectedStudents.length - marksEntered, 0),
+    facultyName,
+  };
+}
+
+function buildResultSemesterStatus(className: string, semester: number) {
+  const semesterSubjects = db.resultSubjects.filter(
+    (subject) => subject.className === className && subject.semester === semester
+  );
+  const subjectStatuses = semesterSubjects.map(buildResultSubjectStatus);
+  const pendingFacultyNames = Array.from(
+    new Set(subjectStatuses.filter((item) => !item.readyToPublish).map((item) => item.facultyName))
+  );
+  const pendingFacultyIds = Array.from(
+    new Set(subjectStatuses.filter((item) => !item.readyToPublish).map((item) => item.subject.facultyId))
+  );
+
+  return {
+    className,
+    semester,
+    publishAt: semesterSubjects[0]?.publishAt ?? null,
+    allSubjectsReady: subjectStatuses.length > 0 && subjectStatuses.every((item) => item.readyToPublish),
+    allSubjectsPublished: subjectStatuses.length > 0 && subjectStatuses.every((item) => item.subject.published),
+    pendingFacultyIds,
+    pendingFacultyNames,
+    subjects: subjectStatuses,
+  };
+}
+
+async function processScheduledResultPublications() {
+  const now = new Date().toISOString();
+  let changed = false;
+
+  db.resultSubjects = db.resultSubjects.map((subject) => {
+    if (!subject.publishAt || subject.published || subject.publishAt > now) {
+      return subject;
+    }
+
+    changed = true;
+    return {
+      ...subject,
+      published: true,
+    };
+  });
+
+  if (!changed) {
+    return;
+  }
+
+  const publishedSubjectIds = new Set(
+    db.resultSubjects.filter((subject) => subject.published).map((subject) => subject.id)
+  );
+
+  db.resultMarks = db.resultMarks.map((mark) =>
+    publishedSubjectIds.has(mark.subjectId)
+      ? {
+          ...mark,
+          published: true,
+        }
+      : mark
+  );
+
+  await persist();
+}
+
+function buildArchiveSummary(snapshot: DB): DataArchive['summary'] {
+  return {
+    classes: snapshot.academicYear.classes.length,
+    faculty: snapshot.faculty.length,
+    students: snapshot.students.length,
+    locations: snapshot.locations.length,
+    timetableEntries: snapshot.timetable.length,
+    attendanceSessions: snapshot.attendance.length,
+    notices: snapshot.notices.length,
+    doubts: snapshot.doubts.length,
+    resultSubjects: snapshot.resultSubjects.length,
+    resultMarks: snapshot.resultMarks.length,
+    studyMaterials: snapshot.studyMaterials.length,
+    financeExpenses: snapshot.finance.expenses.length,
+    financeRevenues: snapshot.finance.revenues.length,
+  };
+}
+
+async function archiveCurrentDatabase(): Promise<DataArchive> {
+  const archiveId = randomUUID();
+  const createdAt = new Date().toISOString();
+  const safeYear = db.academicYear.year.trim().replace(/[^a-zA-Z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'academic-year';
+  const fileName = `${safeYear}-${createdAt.replace(/[:.]/g, '-')}-${archiveId}.json`;
+  const filePath = join(archiveDirectory, fileName);
+
+  await fs.mkdir(archiveDirectory, { recursive: true });
+  await fs.writeFile(filePath, JSON.stringify(db, null, 2), 'utf-8');
+
+  const archive: DataArchive = {
+    id: archiveId,
+    format: 'json-snapshot',
+    fileName,
+    filePath,
+    createdAt,
+    createdById: ADMIN_CREDENTIALS.id,
+    createdByName: ADMIN_CREDENTIALS.name,
+    createdByRole: 'admin',
+    academicYearLabel: db.academicYear.year,
+    summary: buildArchiveSummary(db),
+  };
+
+  return archive;
+}
+
+async function deleteStoredStudyMaterials(materials: StudyMaterial[]) {
+  for (const material of materials) {
+    await removeFileFromStorage(material.filePath);
+  }
+}
+
+function createResetDatabase(previous: DB, archive: DataArchive): DB {
+  const resetLog: OperationLog = {
+    id: randomUUID(),
+    action: 'kill-switch',
+    entity: 'academic-year',
+    message: `Kill switch executed. Live data wiped after archive ${archive.fileName} was created.`,
+    actorId: ADMIN_CREDENTIALS.id,
+    actorName: ADMIN_CREDENTIALS.name,
+    actorRole: 'admin',
+    createdAt: new Date().toISOString(),
+    metadata: {
+      archiveId: archive.id,
+      archiveFile: archive.fileName,
+    },
+  };
+
+  return {
+    academicYear: {
+      ...previous.academicYear,
+      isActive: false,
+      classes: [],
+    },
+    faculty: [],
+    students: [],
+    locations: [],
+    timetable: [],
+    attendance: [],
+    finance: {
+      revenues: [],
+      expenses: [],
+    },
+    notices: [],
+    doubts: [],
+    resultSubjects: [],
+    resultMarks: [],
+    studyMaterials: [],
+    logs: [resetLog],
+    archives: [archive, ...previous.archives].slice(0, 50),
+  };
+}
+
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: Date.now() });
+});
+
+app.get('/api/logs', (req, res) => {
+  res.json(db.logs);
+});
+
+app.get('/api/archives', (req, res) => {
+  res.json(db.archives);
+});
+
+app.get('/api/archives/:id/download', async (req, res) => {
+  const archive = db.archives.find((item) => item.id === req.params.id);
+
+  if (!archive) {
+    return res.status(404).json({ error: 'Archive not found' });
+  }
+
+  try {
+    await fs.access(archive.filePath);
+    res.download(archive.filePath, archive.fileName);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Archive file is unavailable';
+    res.status(404).json({ error: message });
+  }
 });
 
 app.post('/api/login', (req, res) => {
@@ -149,6 +365,17 @@ app.post('/api/login', (req, res) => {
   }
 
   if (username === ADMIN_CREDENTIALS.username && password === ADMIN_CREDENTIALS.password) {
+    appendLog({
+      action: 'login',
+      entity: 'auth',
+      message: 'Admin signed in successfully.',
+      actorId: ADMIN_CREDENTIALS.id,
+      actorName: ADMIN_CREDENTIALS.name,
+      actorRole: ADMIN_CREDENTIALS.role,
+      metadata: {
+        username: ADMIN_CREDENTIALS.username,
+      },
+    });
     return res.json({
       user: {
         id: ADMIN_CREDENTIALS.id,
@@ -163,6 +390,17 @@ app.post('/api/login', (req, res) => {
 
   const faculty = db.faculty.find((item) => item.username === username && item.password === password);
   if (faculty) {
+    appendLog({
+      action: 'login',
+      entity: 'auth',
+      message: `${faculty.name} signed in successfully.`,
+      actorId: faculty.id,
+      actorName: faculty.name,
+      actorRole: 'faculty',
+      metadata: {
+        username: faculty.username,
+      },
+    });
     return res.json({
       user: {
         id: faculty.id,
@@ -177,6 +415,17 @@ app.post('/api/login', (req, res) => {
 
   const student = db.students.find((item) => item.username === username && item.password === password);
   if (student) {
+    appendLog({
+      action: 'login',
+      entity: 'auth',
+      message: `${student.name} signed in successfully.`,
+      actorId: student.id,
+      actorName: student.name,
+      actorRole: 'student',
+      metadata: {
+        username: student.username,
+      },
+    });
     return res.json({
       user: {
         id: student.id,
@@ -184,7 +433,7 @@ app.post('/api/login', (req, res) => {
         username: student.username,
         role: 'student' as const,
         classes: [student.class],
-        subjects: [],
+        subjects: student.subjects,
       },
     });
   }
@@ -207,14 +456,65 @@ app.post('/api/academic-year/start', async (req, res) => {
     year,
     isActive: true,
   };
+  appendLog({
+    action: 'start',
+    entity: 'academic-year',
+    message: `Academic cycle ${year} started.`,
+    actorId: ADMIN_CREDENTIALS.id,
+    actorName: ADMIN_CREDENTIALS.name,
+    actorRole: 'admin',
+    metadata: { year },
+  });
   await persist();
   res.json(db.academicYear);
 });
 
 app.post('/api/academic-year/stop', async (req, res) => {
   db.academicYear.isActive = false;
+  appendLog({
+    action: 'stop',
+    entity: 'academic-year',
+    message: `Academic cycle ${db.academicYear.year} stopped.`,
+    actorId: ADMIN_CREDENTIALS.id,
+    actorName: ADMIN_CREDENTIALS.name,
+    actorRole: 'admin',
+    metadata: { year: db.academicYear.year },
+  });
   await persist();
   res.json(db.academicYear);
+});
+
+app.post('/api/academic-year/kill-switch', async (req, res) => {
+  const { password } = req.body as { password?: string };
+
+  if (!password) {
+    return res.status(400).json({ error: 'Principal password is required' });
+  }
+
+  if (password !== PRINCIPAL_KILL_SWITCH_PASSWORD) {
+    return res.status(403).json({ error: 'Invalid principal password' });
+  }
+
+  try {
+    const archive = await archiveCurrentDatabase();
+    await deleteStoredStudyMaterials(db.studyMaterials);
+    db = createResetDatabase(db, archive);
+    await persist();
+    res.json({
+      academicYear: db.academicYear,
+      archive: {
+        id: archive.id,
+        format: archive.format,
+        fileName: archive.fileName,
+        filePath: archive.filePath,
+        createdAt: archive.createdAt,
+        academicYearLabel: archive.academicYearLabel,
+      },
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Failed to run kill switch';
+    res.status(500).json({ error: message });
+  }
 });
 
 app.post('/api/academic-year/classes', async (req, res) => {
@@ -244,6 +544,15 @@ app.post('/api/academic-year/classes', async (req, res) => {
   };
 
   db.academicYear.classes.push(next);
+  appendLog({
+    action: 'create',
+    entity: 'academic-class',
+    message: `Class ${next.name} created with ${next.subjects.length} subjects.`,
+    actorId: ADMIN_CREDENTIALS.id,
+    actorName: ADMIN_CREDENTIALS.name,
+    actorRole: 'admin',
+    metadata: { className: next.name, subjectCount: next.subjects.length },
+  });
   await persist();
   res.status(201).json(next);
 });
@@ -272,6 +581,15 @@ app.put('/api/academic-year/classes/:id', async (req, res) => {
   };
 
   db.academicYear.classes[index] = updated;
+  appendLog({
+    action: 'update',
+    entity: 'academic-class',
+    message: `Class ${updated.name} updated.`,
+    actorId: ADMIN_CREDENTIALS.id,
+    actorName: ADMIN_CREDENTIALS.name,
+    actorRole: 'admin',
+    metadata: { className: updated.name, subjectCount: updated.subjects.length },
+  });
   await persist();
   res.json(updated);
 });
@@ -296,6 +614,15 @@ app.post('/api/faculty', async (req, res) => {
     classes: Array.isArray(body.classes) ? body.classes : [],
   };
   db.faculty.push(newFaculty);
+  appendLog({
+    action: 'create',
+    entity: 'faculty',
+    message: `Faculty ${newFaculty.name} created.`,
+    actorId: ADMIN_CREDENTIALS.id,
+    actorName: ADMIN_CREDENTIALS.name,
+    actorRole: 'admin',
+    metadata: { facultyId: newFaculty.id, classCount: newFaculty.classes.length },
+  });
   await persist();
   res.status(201).json(sanitizeFaculty(newFaculty));
 });
@@ -315,6 +642,15 @@ app.put('/api/faculty/:id', async (req, res) => {
     classes: Array.isArray(body.classes) ? body.classes : db.faculty[index].classes,
   };
   db.faculty[index] = updated;
+  appendLog({
+    action: 'update',
+    entity: 'faculty',
+    message: `Faculty ${updated.name} updated.`,
+    actorId: ADMIN_CREDENTIALS.id,
+    actorName: ADMIN_CREDENTIALS.name,
+    actorRole: 'admin',
+    metadata: { facultyId: updated.id, classCount: updated.classes.length },
+  });
   await persist();
   res.json(sanitizeFaculty(updated));
 });
@@ -326,6 +662,15 @@ app.delete('/api/faculty/:id', async (req, res) => {
   if (db.faculty.length === before) {
     return res.status(404).json({ error: 'Faculty not found' });
   }
+  appendLog({
+    action: 'delete',
+    entity: 'faculty',
+    message: `Faculty ${id} deleted.`,
+    actorId: ADMIN_CREDENTIALS.id,
+    actorName: ADMIN_CREDENTIALS.name,
+    actorRole: 'admin',
+    metadata: { facultyId: id },
+  });
   await persist();
   res.status(204).send();
 });
@@ -347,8 +692,20 @@ app.post('/api/students', async (req, res) => {
     password: body.password,
     class: body.class,
     rollNo: body.rollNo,
+    semester: body.semester ?? 1,
+    subjects: Array.isArray(body.subjects) ? body.subjects : [],
+    cgpa: body.cgpa ?? 0,
   };
   db.students.push(newStudent);
+  appendLog({
+    action: 'create',
+    entity: 'student',
+    message: `Student ${newStudent.name} created.`,
+    actorId: body.class ?? 'system',
+    actorName: 'System',
+    actorRole: 'system',
+    metadata: { studentId: newStudent.id, className: newStudent.class },
+  });
   await persist();
   res.status(201).json(sanitizeStudent(newStudent));
 });
@@ -364,8 +721,20 @@ app.put('/api/students/:id', async (req, res) => {
     ...db.students[index],
     ...body,
     password: body.password ?? db.students[index].password,
+    semester: body.semester ?? db.students[index].semester,
+    subjects: Array.isArray(body.subjects) ? body.subjects : db.students[index].subjects,
+    cgpa: body.cgpa ?? db.students[index].cgpa,
   };
   db.students[index] = updated;
+  appendLog({
+    action: 'update',
+    entity: 'student',
+    message: `Student ${updated.name} updated.`,
+    actorId: updated.id,
+    actorName: updated.name,
+    actorRole: 'system',
+    metadata: { studentId: updated.id, className: updated.class },
+  });
   await persist();
   res.json(sanitizeStudent(updated));
 });
@@ -377,6 +746,15 @@ app.delete('/api/students/:id', async (req, res) => {
   if (db.students.length === before) {
     return res.status(404).json({ error: 'Student not found' });
   }
+  appendLog({
+    action: 'delete',
+    entity: 'student',
+    message: `Student ${id} deleted.`,
+    actorId: 'system',
+    actorName: 'System',
+    actorRole: 'system',
+    metadata: { studentId: id },
+  });
   await persist();
   res.status(204).send();
 });
@@ -404,6 +782,15 @@ app.post('/api/locations', async (req, res) => {
   };
 
   db.locations.push(location);
+  appendLog({
+    action: 'create',
+    entity: 'location',
+    message: `Location ${location.name} created.`,
+    actorId: ADMIN_CREDENTIALS.id,
+    actorName: ADMIN_CREDENTIALS.name,
+    actorRole: 'admin',
+    metadata: { locationId: location.id, type: location.type },
+  });
   await persist();
   res.status(201).json(location);
 });
@@ -427,6 +814,15 @@ app.put('/api/locations/:id', async (req, res) => {
   };
 
   db.locations[index] = updated;
+  appendLog({
+    action: 'update',
+    entity: 'location',
+    message: `Location ${updated.name} updated.`,
+    actorId: ADMIN_CREDENTIALS.id,
+    actorName: ADMIN_CREDENTIALS.name,
+    actorRole: 'admin',
+    metadata: { locationId: updated.id, type: updated.type },
+  });
   await persist();
   res.json(updated);
 });
@@ -446,6 +842,15 @@ app.delete('/api/locations/:id', async (req, res) => {
     return res.status(404).json({ error: 'Location not found' });
   }
 
+  appendLog({
+    action: 'delete',
+    entity: 'location',
+    message: `Location ${id} deleted.`,
+    actorId: ADMIN_CREDENTIALS.id,
+    actorName: ADMIN_CREDENTIALS.name,
+    actorRole: 'admin',
+    metadata: { locationId: id },
+  });
   await persist();
   res.status(204).send();
 });
@@ -492,6 +897,22 @@ app.post('/api/timetable', async (req, res) => {
   };
 
   db.timetable.push(entry);
+  appendLog({
+    action: 'create',
+    entity: 'timetable',
+    message: `Lecture ${entry.subject} scheduled for ${entry.className}.`,
+    actorId: body.facultyId,
+    actorName: db.faculty.find((item) => item.id === body.facultyId)?.name ?? 'Faculty',
+    actorRole: 'faculty',
+    metadata: {
+      timetableEntryId: entry.id,
+      className: entry.className,
+      locationId: entry.locationId,
+      date: entry.date,
+      startTime: entry.startTime,
+      endTime: entry.endTime,
+    },
+  });
   await persist();
   res.status(201).json(entry);
 });
@@ -519,6 +940,21 @@ app.put('/api/timetable/:id', async (req, res) => {
   };
 
   db.timetable[index] = updated;
+  appendLog({
+    action: 'update',
+    entity: 'timetable',
+    message: `Lecture ${updated.subject} updated for ${updated.className}.`,
+    actorId: updated.facultyId,
+    actorName: db.faculty.find((item) => item.id === updated.facultyId)?.name ?? 'Faculty',
+    actorRole: 'faculty',
+    metadata: {
+      timetableEntryId: updated.id,
+      locationId: updated.locationId,
+      date: updated.date,
+      startTime: updated.startTime,
+      endTime: updated.endTime,
+    },
+  });
   await persist();
   res.json(updated);
 });
@@ -534,6 +970,15 @@ app.delete('/api/timetable/:id', async (req, res) => {
 
   db.attendance = db.attendance.filter((item) => item.timetableEntryId !== id);
 
+  appendLog({
+    action: 'delete',
+    entity: 'timetable',
+    message: `Lecture ${id} deleted from timetable.`,
+    actorId: 'system',
+    actorName: 'System',
+    actorRole: 'system',
+    metadata: { timetableEntryId: id },
+  });
   await persist();
   res.status(204).send();
 });
@@ -583,6 +1028,15 @@ app.post('/api/attendance', async (req, res) => {
   };
 
   db.attendance.push(session);
+  appendLog({
+    action: 'create',
+    entity: 'attendance',
+    message: `Attendance session created for ${session.subject} in ${session.className}.`,
+    actorId: session.facultyId,
+    actorName: db.faculty.find((item) => item.id === session.facultyId)?.name ?? 'Faculty',
+    actorRole: 'faculty',
+    metadata: { attendanceSessionId: session.id, timetableEntryId: session.timetableEntryId, punchInEnabled: session.punchInEnabled },
+  });
   await persist();
   res.status(201).json(session);
 });
@@ -615,6 +1069,15 @@ app.put('/api/attendance/:id', async (req, res) => {
   };
 
   db.attendance[index] = updated;
+  appendLog({
+    action: 'update',
+    entity: 'attendance',
+    message: `Attendance session updated for ${updated.subject} in ${updated.className}.`,
+    actorId: updated.facultyId,
+    actorName: db.faculty.find((item) => item.id === updated.facultyId)?.name ?? 'Faculty',
+    actorRole: 'faculty',
+    metadata: { attendanceSessionId: updated.id, punchInEnabled: updated.punchInEnabled },
+  });
   await persist();
   res.json(updated);
 });
@@ -645,6 +1108,15 @@ app.post('/api/finance/expenses', async (req, res) => {
   };
 
   db.finance.expenses.push(expense);
+  appendLog({
+    action: 'create',
+    entity: 'finance-expense',
+    message: `Expense ${expense.title} added.`,
+    actorId: ADMIN_CREDENTIALS.id,
+    actorName: ADMIN_CREDENTIALS.name,
+    actorRole: 'admin',
+    metadata: { expenseId: expense.id, amount: expense.amount, category: expense.category },
+  });
   await persist();
   res.status(201).json(expense);
 });
@@ -665,6 +1137,15 @@ app.put('/api/finance/expenses/:id', async (req, res) => {
   };
 
   db.finance.expenses[index] = updated;
+  appendLog({
+    action: 'update',
+    entity: 'finance-expense',
+    message: `Expense ${updated.title} updated.`,
+    actorId: ADMIN_CREDENTIALS.id,
+    actorName: ADMIN_CREDENTIALS.name,
+    actorRole: 'admin',
+    metadata: { expenseId: updated.id, amount: updated.amount, category: updated.category },
+  });
   await persist();
   res.json(updated);
 });
@@ -678,6 +1159,15 @@ app.delete('/api/finance/expenses/:id', async (req, res) => {
     return res.status(404).json({ error: 'Expense not found' });
   }
 
+  appendLog({
+    action: 'delete',
+    entity: 'finance-expense',
+    message: `Expense ${id} deleted.`,
+    actorId: ADMIN_CREDENTIALS.id,
+    actorName: ADMIN_CREDENTIALS.name,
+    actorRole: 'admin',
+    metadata: { expenseId: id },
+  });
   await persist();
   res.status(204).send();
 });
@@ -720,6 +1210,15 @@ app.post('/api/notices', async (req, res) => {
   };
 
   db.notices.push(notice);
+  appendLog({
+    action: 'create',
+    entity: 'notice',
+    message: `Notice "${notice.title}" published.`,
+    actorId: notice.authorId,
+    actorName: notice.authorName,
+    actorRole: notice.authorRole,
+    metadata: { noticeId: notice.id, targetScope: notice.targetScope },
+  });
   await persist();
   res.status(201).json(notice);
 });
@@ -741,6 +1240,15 @@ app.put('/api/notices/:id', async (req, res) => {
   };
 
   db.notices[index] = updated;
+  appendLog({
+    action: 'update',
+    entity: 'notice',
+    message: `Notice "${updated.title}" updated.`,
+    actorId: updated.authorId,
+    actorName: updated.authorName,
+    actorRole: updated.authorRole,
+    metadata: { noticeId: updated.id, targetScope: updated.targetScope },
+  });
   await persist();
   res.json(updated);
 });
@@ -754,6 +1262,15 @@ app.delete('/api/notices/:id', async (req, res) => {
     return res.status(404).json({ error: 'Notice not found' });
   }
 
+  appendLog({
+    action: 'delete',
+    entity: 'notice',
+    message: `Notice ${id} deleted.`,
+    actorId: 'system',
+    actorName: 'System',
+    actorRole: 'system',
+    metadata: { noticeId: id },
+  });
   await persist();
   res.status(204).send();
 });
@@ -800,6 +1317,15 @@ app.post('/api/doubts', async (req, res) => {
   };
 
   db.doubts.push(entry);
+  appendLog({
+    action: 'create',
+    entity: body.type,
+    message: `${body.type === 'doubt' ? 'Doubt' : 'Feedback'} "${entry.title}" submitted.`,
+    actorId: entry.studentId,
+    actorName: entry.studentName,
+    actorRole: 'student',
+    metadata: { entryId: entry.id, teacherId: entry.teacherId, className: entry.className },
+  });
   await persist();
   res.status(201).json(entry);
 });
@@ -906,6 +1432,15 @@ app.post('/api/materials', upload.single('file'), async (req, res) => {
     };
 
     db.studyMaterials.push(material);
+    appendLog({
+      action: 'upload',
+      entity: 'study-material',
+      message: `Material "${material.title}" uploaded for ${material.className}.`,
+      actorId: material.uploadedById,
+      actorName: material.uploadedByName,
+      actorRole: material.uploadedByRole,
+      metadata: { materialId: material.id, subject: material.subject, fileName: material.fileName },
+    });
     await persist();
     res.status(201).json(material);
   } catch (error) {
@@ -969,6 +1504,15 @@ app.delete('/api/materials/:id', async (req, res) => {
   try {
     await removeFileFromStorage(material.filePath);
     db.studyMaterials.splice(index, 1);
+    appendLog({
+      action: 'delete',
+      entity: 'study-material',
+      message: `Material "${material.title}" deleted.`,
+      actorId: requester.id,
+      actorName: requester.name,
+      actorRole: role,
+      metadata: { materialId: material.id, subject: material.subject },
+    });
     await persist();
     res.status(204).send();
   } catch (error) {
@@ -978,12 +1522,63 @@ app.delete('/api/materials/:id', async (req, res) => {
 });
 
 // Results & marks
-app.get('/api/results/subjects', (req, res) => {
+app.get('/api/results/subjects', async (req, res) => {
+  await processScheduledResultPublications();
   res.json(db.resultSubjects);
 });
 
-app.get('/api/results/marks', (req, res) => {
+app.get('/api/results/marks', async (req, res) => {
+  await processScheduledResultPublications();
   res.json(db.resultMarks);
+});
+
+app.get('/api/results/status', async (req, res) => {
+  await processScheduledResultPublications();
+  const keys = Array.from(new Set(db.resultSubjects.map((subject) => `${subject.className}::${subject.semester}`)));
+  const statuses = keys.map((key) => {
+    const [className, semesterValue] = key.split('::');
+    return buildResultSemesterStatus(className, Number(semesterValue));
+  });
+  res.json(statuses);
+});
+
+app.post('/api/results/schedule-publish', async (req, res) => {
+  const { className, semester, publishAt } = req.body as { className?: string; semester?: number; publishAt?: string | null };
+
+  if (!className || semester === undefined) {
+    return res.status(400).json({ error: 'className and semester are required' });
+  }
+
+  const matchingSubjects = db.resultSubjects.filter(
+    (subject) => subject.className === className && subject.semester === Number(semester)
+  );
+
+  if (matchingSubjects.length === 0) {
+    return res.status(404).json({ error: 'No result subjects found for this class and semester' });
+  }
+
+  db.resultSubjects = db.resultSubjects.map((subject) =>
+    subject.className === className && subject.semester === Number(semester)
+      ? {
+          ...subject,
+          publishAt: publishAt ?? null,
+        }
+      : subject
+  );
+
+  appendLog({
+    action: 'schedule',
+    entity: 'result-publish',
+    message: `Result publish ${publishAt ? `scheduled for ${className} semester ${semester}` : `cleared for ${className} semester ${semester}`}.`,
+    actorId: ADMIN_CREDENTIALS.id,
+    actorName: ADMIN_CREDENTIALS.name,
+    actorRole: 'admin',
+    metadata: { className, semester: Number(semester), publishAt: publishAt ?? null },
+  });
+
+  await processScheduledResultPublications();
+  await persist();
+  res.json(buildResultSemesterStatus(className, Number(semester)));
 });
 
 app.post('/api/results/marks', async (req, res) => {
@@ -1045,6 +1640,15 @@ app.post('/api/results/marks', async (req, res) => {
     db.resultMarks.push(nextMark);
   }
 
+  appendLog({
+    action: existingIndex >= 0 ? 'update' : 'create',
+    entity: 'result-mark',
+    message: `Result mark ${existingIndex >= 0 ? 'updated' : 'created'} for student ${body.studentId}.`,
+    actorId: body.facultyId,
+    actorName: db.faculty.find((item) => item.id === body.facultyId)?.name ?? 'Faculty',
+    actorRole: 'faculty',
+    metadata: { markId: nextMark.id, subjectId: body.subjectId, studentId: body.studentId },
+  });
   await persist();
   res.status(existingIndex >= 0 ? 200 : 201).json(nextMark);
 });
@@ -1071,6 +1675,15 @@ app.post('/api/results/subjects/:id/publish', async (req, res) => {
       : mark
   );
 
+  appendLog({
+    action: 'publish',
+    entity: 'result-subject',
+    message: `Results published for subject ${id}.`,
+    actorId: db.resultSubjects[subjectIndex].facultyId,
+    actorName: db.faculty.find((item) => item.id === db.resultSubjects[subjectIndex].facultyId)?.name ?? 'Faculty',
+    actorRole: 'faculty',
+    metadata: { subjectId: id, className: db.resultSubjects[subjectIndex].className },
+  });
   await persist();
   res.json(db.resultSubjects[subjectIndex]);
 });

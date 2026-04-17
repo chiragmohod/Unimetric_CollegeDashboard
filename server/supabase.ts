@@ -26,6 +26,8 @@ function normalizeDB(parsed: DB): DB {
     students: (parsed.students ?? []).map((item) => ({
       ...item,
       password: item.password ?? '12345678',
+      semester: item.semester ?? 1,
+      subjects: item.subjects ?? [],
     })),
     academicYear: {
       ...parsed.academicYear,
@@ -44,9 +46,14 @@ function normalizeDB(parsed: DB): DB {
     },
     notices: parsed.notices ?? [],
     doubts: parsed.doubts ?? [],
-    resultSubjects: parsed.resultSubjects ?? [],
+    resultSubjects: (parsed.resultSubjects ?? []).map((item) => ({
+      ...item,
+      publishAt: item.publishAt ?? null,
+    })),
     resultMarks: parsed.resultMarks ?? [],
     studyMaterials: parsed.studyMaterials ?? [],
+    logs: parsed.logs ?? [],
+    archives: parsed.archives ?? [],
   };
 }
 
