@@ -10,7 +10,6 @@ coverage
 # Development
 .dev.*
 .serve.*
-src
 
 # VCS
 .git
