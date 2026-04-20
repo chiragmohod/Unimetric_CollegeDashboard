@@ -5,6 +5,8 @@ A comprehensive, cloud-agnostic college management dashboard with dedicated port
 
 ## 📋 Features
 
+<img width="2432" height="1440" alt="vlcsnap-2026-04-20-20h01m10s170" src="https://github.com/user-attachments/assets/e9ae11e1-a5ee-440b-b887-f178f819f42a" />
+
 ### Admin Dashboard
 - 👥 Faculty and student management
 - 📚 Academic year and class configuration
@@ -13,12 +15,17 @@ A comprehensive, cloud-agnostic college management dashboard with dedicated port
 - 📊 Comprehensive admin logs and audit trails
 - 🎓 Academic materials and resources
 
+
+<img width="2432" height="1440" alt="vlcsnap-2026-04-20-20h01m31s841" src="https://github.com/user-attachments/assets/c68c1d63-fa3e-4b32-95de-77a9c149700c" />
+
 ### Faculty Portal
 - 📅 Schedule and timetable view
 - ✅ Student attendance tracking
 - 📁 Upload and manage study materials
 - 👨‍🎓 Manage assigned students and classes
 - 🎯 Track student progress and results
+
+<img width="2432" height="1440" alt="vlcsnap-2026-04-20-20h01m44s650" src="https://github.com/user-attachments/assets/0d3de8d7-0d0c-43ca-ba46-e94d862532ba" />
 
 ### Student Portal
 - 📅 Personal timetable and schedule
