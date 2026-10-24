@@ -476,9 +476,9 @@ For issues, questions, or suggestions:
 
 ## 📞 Contact
 
-- **Project Lead**: [Your Name]
-- **Email**: your.email@example.com
-- **Organization**: [Your Organization]
+- **Project Lead**: Chirag Mohod
+- **Email**: chiragmohod28@gmail.com
+
 
 ---
 
